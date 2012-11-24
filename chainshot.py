@@ -88,7 +88,7 @@ def _best_first_search_core(board):
     working_board = board.copy()
     queue = []
     for i in xrange(len(working_board)-1, 0, -1):
-        for j in xrange(len(working_board)-1, 0, -1):
+        for j in xrange(len(working_board)):
             removed = working_board.chain_length(i, j)
             if removed > 2:
                 queue.append(((i, j), removed))
