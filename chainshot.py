@@ -101,13 +101,14 @@ def _best_first_search_core(board):
 def _parallel_best_first_search_core(board, pool):
     '''Splits the board into four segments and performs best-first search on each.'''
     even = len(board) % 2 == 0
-    size = (len(board)/2) if even else (len(board)/2 + 1)
+    size = (len(board)/2) if even else (len(board)/2 + 1) # size of each subsquare
+    shift = size if even else (size-1) # translation
     boards = []
 
     boards.append(SameGameBoard([i[:size] for i in board[:size]]))
-    boards.append(SameGameBoard([i[(size if even else size-1):] for i in board[:size]]))
-    boards.append(SameGameBoard([i[:size] for i in board[(size if even else size-1):]]))
-    boards.append(SameGameBoard([i[(size if even else size-1):] for i in board[(size if even else size-1):]]))
+    boards.append(SameGameBoard([i[shift:] for i in board[:size]]))
+    boards.append(SameGameBoard([i[:size] for i in board[shift:]]))
+    boards.append(SameGameBoard([i[shift:] for i in board[shift:]]))
 
     processed = pool.map(_best_first_search_core, boards)
     results = []
@@ -116,11 +117,11 @@ def _parallel_best_first_search_core(board, pool):
     if processed[0] is not None:
         results.append(processed[0])
     if processed[1] is not None:
-        results.append(((processed[1][0][0], processed[1][0][1]+(size if even else size-1)), processed[1][1]))
+        results.append(((processed[1][0][0], processed[1][0][1]+shift), processed[1][1]))
     if processed[2] is not None:
-        results.append(((processed[2][0][0]+(size if even else size-1), processed[2][0][1]), processed[2][1]))
+        results.append(((processed[2][0][0]+shift, processed[2][0][1]), processed[2][1]))
     if processed[3] is not None:
-        results.append(((processed[3][0][0]+(size if even else size-1), processed[3][0][1]+(size if even else size-1)), processed[3][1]))
+        results.append(((processed[3][0][0]+shift, processed[3][0][1]+shift), processed[3][1]))
 
     if not results:
         return _best_first_search_core(board)
@@ -191,11 +192,13 @@ should be entered as: x y. For example, 5 2 corresponds to
         '''Best-first search using the heuristic of most tiles removed.'''
         self.board = SameGameBoard([list(i.strip()) for i in open(board_path, 'r').readlines()])
         print self.board
+
         score = 0
         moves = []
+        pool = Pool(4)
 
         if alg == _parallel_best_first_search_core:
-            alg = lambda x: _parallel_best_first_search_core(x, Pool(4))
+            alg = lambda x: _parallel_best_first_search_core(x, pool)
 
         start = time.clock()
         while not self.board.end_game():     
