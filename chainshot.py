@@ -6,11 +6,15 @@ import time
 from multiprocessing import Pool
 
 class SameGameBoard(list):
-    # TODO: Print row and column numbers
     def __str__(self):
-        r = ''
-        for i in self:
-            r += ''.join([str(j) if j else '*' for j in i])+'\n'
+        # This is pretty ugly and probably merits a rewrite at some point.
+        width = len(self)
+        column_width = len(str(width))+1
+        formatter = '%' + str(column_width) + 's'
+        r = ' '*len(str(width)) + ''.join(formatter % str(i) for i in xrange(1, len(self)+1))+'\n'
+        for i in zip(xrange(len(self), 0, -1), self):
+            num = str(i[0])
+            r += str(i[0]) + ' '*(len(str(width)) - len(num)) + ''.join([formatter % (str(j) if j else '*') for j in i[1]])+'\n'
         return r[:-1]
 
     def size(self):
@@ -126,9 +130,6 @@ def _parallel_best_first_search_core(board, pool):
     if not results:
         return _best_first_search_core(board)
     return max(results, key=operator.itemgetter(1))
-
-def _parallel_best_n_search_core():
-        pass
 
 class SameGame(object):
     def print_main_menu(self):
