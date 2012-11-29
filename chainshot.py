@@ -4,6 +4,8 @@ import os.path
 import operator
 import time
 from multiprocessing import Pool
+import argparse
+import sys
 
 class SameGameBoard(list):
     def __str__(self):
@@ -79,31 +81,91 @@ class SameGameBoard(list):
         return True
 
     def translate_coords(self, x, y):
+        '''Translate coordinates with (1,1) being the bottom left
+corner to our internal coordinate system.'''
         return (len(self) - x, y - 1)
 
     def inverse_translate_coords(self, x, y):
         return (len(self) - x, y + 1)
 
+    def available_moves(self):
+        '''Determines the possible moves for this board, along with
+how many tiles each move will remove from the board.'''
+        working_board = self.copy()
+        queue = []
+        for i in xrange(len(working_board)-1, 0, -1):
+            for j in xrange(len(working_board)):
+                removed = working_board.chain_length(i, j)
+                if removed > 2:
+                    queue.append(((i, j), removed))
+                    working_board.remove_chain(i, j)
+        return queue
+
+    def isolated_tiles(self):
+        '''Return the isolated tiles.'''
+        working_board = self.copy()
+        queue = []
+        for i in xrange(len(working_board)-1, 0, -1):
+            for j in xrange(len(working_board)):
+                removed = working_board.chain_length(i, j)
+                if 0 < removed < 3:
+                    queue.append(((i, j), removed))
+                    working_board.remove_chain(i, j)
+        return queue
+
+def _remove_and_collapse(move_board):
+    move_board[1].remove_chain(*move_board[0][0])
+    return move_board[1].collapse()
+
+def _nonisolated_tiles(board):
+    return board.size() - len(board.isolated_tiles())
+
 # NOTE: These don't belong to a class because Python has issues
 #       serializing instance methods of classes for use with the
 #       multiprocessing module.
-def _best_first_search_core(board):
-    '''Return the best move for the supplied board.'''
-    working_board = board.copy()
-    queue = []
-    for i in xrange(len(working_board)-1, 0, -1):
-        for j in xrange(len(working_board)):
-            removed = working_board.chain_length(i, j)
-            if removed > 2:
-                queue.append(((i, j), removed))
-                working_board.remove_chain(i, j)
-
-    if not queue:
+def _combined_core(_board, pool, w1=.2, w2=.8):
+    '''Let f be as defined in _best_first_search_core. Let g be as
+defined in _best_first_search_alt_core. This function maximizes
+w1*f(x) + w2*g(x).'''
+    moves = _board.available_moves()
+    if not moves:
         return None
-    return max(queue, key=operator.itemgetter(1))
 
-def _parallel_best_first_search_core(board, pool):
-    '''Splits the board into four segments and performs best-first search on each.'''
+    boards = [_board.copy() for i in moves]
+    boards = pool.map(_remove_and_collapse, zip(moves, boards))
+    clusters = pool.map(_nonisolated_tiles, boards)
+    moves_with_sums = [(m[0], w1*m[1] + w2*c) if m else (None, -1) for m, c in zip(moves, clusters)]
+
+    return max(moves_with_sums, key=operator.itemgetter(1))
+
+def _best_first_search_alt_core(_board):
+    '''Given a tile t, we will say that t is isolated if t cannot
+currently be removed from the board by a legal move. Let g : S -> Z be
+defined by g(x) = |{t in x : t is NOT an isolated tile}|. This
+function maximizes g(x) at each turn.'''
+    moves = _board.available_moves()
+    if not moves:
+        return None
+    boards = [_board.copy() for i in moves]
+    for move, board in zip(moves, boards):
+        board.remove_chain(*move[0])
+    boards = [i.collapse() for i in boards]
+    clusters = [(m[0], b.size() - len(b.isolated_tiles())) for m, b in zip(moves, boards)]
+
+    return max(clusters, key=operator.itemgetter(1))
+
+def _best_first_search_core(board):
+    '''Define S as the space of SameGame boards. Given a board B in S,
+define ||B|| to be the number of tiles on the board. Let f : S -> N be
+defined by f(x) = ||x||. This function minimizes f(x) at each turn.'''
+    moves = board.available_moves()
+    if not moves:
+        return None
+    return max(moves, key=operator.itemgetter(1))
+
+def _parallelize(board, pool, alg=_best_first_search_core):
+    '''Splits the board into four segments and performs the supplied
+heuristic on each.'''
     even = len(board) % 2 == 0
     size = (len(board)/2) if even else (len(board)/2 + 1) # size of each subsquare
     shift = size if even else (size-1) # translation
@@ -114,7 +176,7 @@ def _parallel_best_first_search_core(board, pool):
     boards.append(SameGameBoard([i[:size] for i in board[shift:]]))
     boards.append(SameGameBoard([i[shift:] for i in board[shift:]]))
 
-    processed = pool.map(_best_first_search_core, boards)
+    processed = pool.map(alg, boards)
     results = []
 
     # Adjust the coordinates for the larger board
@@ -128,18 +190,13 @@ def _parallel_best_first_search_core(board, pool):
         results.append(((processed[3][0][0]+shift, processed[3][0][1]+shift), processed[3][1]))
 
     if not results:
-        return _best_first_search_core(board)
+        return alg(board)
     return max(results, key=operator.itemgetter(1))
 
 class SameGame(object):
-    def print_main_menu(self):
+    def print_welcome(self):
         print "Welcome to Chainshot!"
         print "====================="
-        print "1) Play"
-        print "2) Best-first search"
-        print "3) Parallel best-first search"
-        print "4) Rules"
-        print "5) Exit"
 
     def print_rules(self):
         print
@@ -159,18 +216,19 @@ should be entered as: x y. For example, 5 2 corresponds to
 (5, 2). The bottom left corner is (1, 1).'''
         print
 
-    def get_main_menu_choice(self):
+    def get_menu_choice(self, choices):
+        for i in enumerate(choices):
+            print "%d) %s" % (i[0]+1, i[1])
         print
         try:
             choice = int(raw_input('What would you like to do? '))
-            if 0 < choice and choice < 6 :
+            if 0 < choice and choice <= len(choices):
                 return choice
         except:
             pass
 
         print "I'm sorry, that wasn't a valid choice. Try something else."
-        self.print_main_menu()
-        return self.get_main_menu_choice()
+        return self.get_menu_choice(choices)
 
     def get_move(self):
         raw = raw_input('Enter a move: ')
@@ -192,14 +250,11 @@ should be entered as: x y. For example, 5 2 corresponds to
     def best_first_search(self, board_path, alg):
         '''Best-first search using the heuristic of most tiles removed.'''
         self.board = SameGameBoard([list(i.strip()) for i in open(board_path, 'r').readlines()])
-        print self.board
+        if not self.args.quiet:
+            print self.board
 
         score = 0
         moves = []
-        pool = Pool(4)
-
-        if alg == _parallel_best_first_search_core:
-            alg = lambda x: _parallel_best_first_search_core(x, pool)
 
         start = time.clock()
         while not self.board.end_game():     
@@ -207,21 +262,32 @@ should be entered as: x y. For example, 5 2 corresponds to
             moves.append(best[0])
             score += (self.board.remove_chain(*best[0])-2)**2
             self.board = self.board.collapse()
-            print
-            print self.board
+            if not self.args.quiet:
+                print
+                print self.board
         elapsed = time.clock() - start
 
-        print
+        if not self.args.quiet:
+            print
         unoccupied = self.board.size() - self.board.occupied()
         percentage = int(float(unoccupied)/self.board.size()*100)
-        print 'Game over! Took %.3f seconds.' % elapsed
-        print 'Cleared %d/%d tiles (%d%%) in %d moves for a score of %d.' % (unoccupied,
-                                                                             self.board.size(),
-                                                                             percentage,
-                                                                             len(moves),
-                                                                             score)
-        print [self.board.inverse_translate_coords(*i) for i in moves]
-        print
+
+        if self.args.quiet:
+            print 'time: %.3s, clearance: %d/%d (%d%%), moves: %d, score: %d' % (elapsed,
+                                                                                 unoccupied,
+                                                                                 self.board.size(),
+                                                                                 percentage,
+                                                                                 len(moves),
+                                                                                 score)
+        else:
+            print 'Game over! Took %.3f seconds.' % elapsed
+            print 'Cleared %d/%d tiles (%d%%) in %d moves for a score of %d.' % (unoccupied,
+                                                                                 self.board.size(),
+                                                                                 percentage,
+                                                                                 len(moves),
+                                                                                 score)
+            print [self.board.inverse_translate_coords(*i) for i in moves]
+            print
 
     def play_game(self, board_path):
         self.board = SameGameBoard([list(i.strip()) for i in open(board_path, 'r').readlines()])
@@ -249,16 +315,37 @@ should be entered as: x y. For example, 5 2 corresponds to
             return self.get_board()         
 
     def chainshot(self):
+        parallel_pool = Pool(4)
+        algs = [_best_first_search_core, _best_first_search_alt_core, lambda x: _combined_core(x, parallel_pool)]
+        parser = argparse.ArgumentParser(description='A board must be specified for these options to take effect.')
+        parser.add_argument("board", nargs='?', default=None,
+                            help="path to the board")
+        parser.add_argument("-q", "--quiet", action="store_true",
+                            help="suppress printing of boards and move lists")
+        parser.add_argument("-a", "--ai", type=int, choices=[1, 2, 3],
+                            help="the AI with which to play: either 1, 2, or 3")
+        parser.add_argument("-p", "--parallel", action="store_true",
+                            help="parallelize the search (much faster, but less board clearance), only affects the non-combined searches (i.e., 1 and 2)")
+        self.args = parser.parse_args()
+
+        if self.args.board:
+            alg = (lambda x: _parallelize(x, parallel_pool, algs[self.args.ai-1])) if self.args.parallel and self.args.ai != 3 else algs[self.args.ai-1]
+            self.best_first_search(self.args.board, alg)
+            return
+
         while True:
-            self.print_main_menu()
-            choice = self.get_main_menu_choice()
+            self.print_welcome()
+            choice = self.get_menu_choice(['Human Play', 'AI Play', 'Rules', 'Exit'])
             if choice == 1:
                 self.play_game(self.get_board())
             elif choice == 2:
-                self.best_first_search(self.get_board(), _best_first_search_core)
+                alg_choice = self.get_menu_choice(['Best first search (maximize taken)',
+                                                   'Best first search (maximize clusters)',
+                                                   'Combined best first search (1 + 2)'])
+                parallel_choice = self.get_menu_choice(['Sequential', 'Parallel'])
+                alg = (lambda x: _parallelize(x, pool, algs[alg_choice-1])) if parallel_choice == 2 else algs[alg_choice-1]
+                self.best_first_search(self.get_board(), alg)
             elif choice == 3:
-                self.best_first_search(self.get_board(), _parallel_best_first_search_core)
-            elif choice == 4:
                 self.print_rules()
             else:
                 break
