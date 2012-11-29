@@ -343,7 +343,7 @@ should be entered as: x y. For example, 5 2 corresponds to
                                                    'Best first search (maximize clusters)',
                                                    'Combined best first search (1 + 2)'])
                 parallel_choice = self.get_menu_choice(['Sequential', 'Parallel'])
-                alg = (lambda x: _parallelize(x, pool, algs[alg_choice-1])) if parallel_choice == 2 else algs[alg_choice-1]
+                alg = (lambda x: _parallelize(x, parallel_pool, algs[alg_choice-1])) if parallel_choice == 2 and alg_choice != 3 else algs[alg_choice-1]
                 self.best_first_search(self.get_board(), alg)
             elif choice == 3:
                 self.print_rules()
