@@ -34,18 +34,12 @@ class SameGameBoard(list):
     def transpose(self):
         return SameGameBoard([[self[i][j] for i in xrange(len(self))] for j in xrange(len(self))])
 
-    def collapse_columns(self):
+    def collapse(self):
         t = self.transpose()
         t.sort(key=lambda x: not any(x))
         for i in t:
             i.sort(key=lambda x: x is not None)
         return t.transpose()
-    
-    def collapse_rows(self):
-        return SameGameBoard(sorted(self, key=lambda x: not any(x)))
-
-    def collapse(self):
-        return self.collapse_rows().collapse_columns()
 
     def _chain_length(self, row, column, board):
         color = board[row][column]
@@ -273,7 +267,7 @@ should be entered as: x y. For example, 5 2 corresponds to
         percentage = int(float(unoccupied)/self.board.size()*100)
 
         if self.args.quiet:
-            print 'time: %.3s, clearance: %d/%d (%d%%), moves: %d, score: %d' % (elapsed,
+            print 'time: %.3f, clearance: %d/%d (%d%%), moves: %d, score: %d' % (elapsed,
                                                                                  unoccupied,
                                                                                  self.board.size(),
                                                                                  percentage,
